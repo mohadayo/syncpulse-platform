@@ -41,7 +41,7 @@
 git clone https://github.com/mohadayo/syncpulse-platform.git
 cd syncpulse-platform
 
-# 2. 環境変数のサンプルをコピー（追加予定）
+# 2. 環境変数のサンプルをコピーし、必要に応じてポート等を編集
 cp .env.example .env
 
 # 3. すべてのサービスを起動
@@ -87,7 +87,7 @@ docker compose up --build
 syncpulse-platform/
 ├── README.md
 ├── docker-compose.yml          # 全サービスの起動定義（追加予定）
-├── .env.example                # 環境変数のサンプル（追加予定）
+├── .env.example                # 環境変数のサンプル
 ├── services/
 │   ├── metrics-collector/      # Python サービス（追加予定）
 │   ├── transformer/            # Go サービス（追加予定）
