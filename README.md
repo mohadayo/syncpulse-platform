@@ -114,4 +114,4 @@ syncpulse-platform/
 
 ## ライセンス
 
-未定（追加予定）。
+[MIT License](./LICENSE) の下で公開しています。
