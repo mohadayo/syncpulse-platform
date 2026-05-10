@@ -114,6 +114,10 @@ syncpulse-platform/
 - [ ] CI（lint / test）整備
 - [ ] エンドツーエンドの結合テスト
 
+## セキュリティ
+
+脆弱性の報告手順・スコープ・応答 SLA は [`SECURITY.md`](./SECURITY.md) を参照してください。公開 Issue ではなく GitHub の Private vulnerability reporting を利用してください。
+
 ## ライセンス
 
 [MIT License](./LICENSE) の下で公開しています。
