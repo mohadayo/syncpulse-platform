@@ -119,4 +119,4 @@ git push -u origin feat/<your-feature>
 ## 質問・相談
 
 - 仕様の方向性に迷う場合は Issue で議論してから実装に着手してください
-- セキュリティに関わる発見は Issue ではなく直接メンテナへ連絡してください
+- セキュリティに関わる発見は公開 Issue ではなく [`SECURITY.md`](./SECURITY.md) に記載のフローで報告してください
