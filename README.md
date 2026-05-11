@@ -114,6 +114,12 @@ syncpulse-platform/
 - [ ] CI（lint / test）整備
 - [ ] エンドツーエンドの結合テスト
 
+## コミュニティ
+
+- 行動規範: [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md)
+- コントリビュート方法・ブランチ運用: [`CONTRIBUTING.md`](./CONTRIBUTING.md)
+- 脆弱性報告: [`SECURITY.md`](./SECURITY.md)
+
 ## セキュリティ
 
 脆弱性の報告手順・スコープ・応答 SLA は [`SECURITY.md`](./SECURITY.md) を参照してください。公開 Issue ではなく GitHub の Private vulnerability reporting を利用してください。
