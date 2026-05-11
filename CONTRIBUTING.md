@@ -120,3 +120,4 @@ git push -u origin feat/<your-feature>
 
 - 仕様の方向性に迷う場合は Issue で議論してから実装に着手してください
 - セキュリティに関わる発見は公開 Issue ではなく [`SECURITY.md`](./SECURITY.md) に記載のフローで報告してください
+- コミュニティでのやり取りはすべて [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md) の行動規範に従ってください。違反の報告窓口も同ドキュメントに記載しています
