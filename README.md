@@ -34,7 +34,11 @@
 
 ## ローカルセットアップ
 
-> 注: 各サービスの実装はリポジトリ初期化段階のため未配置です。実装の進捗は本 README 下部の「ロードマップ」を参照してください。コントリビュート方法は [`CONTRIBUTING.md`](./CONTRIBUTING.md) を参照。
+> 注: 一部のサービスは初期実装段階です。実装済み / 未実装の状況は本 README 下部の「ロードマップ」を参照してください。コントリビュート方法は [`CONTRIBUTING.md`](./CONTRIBUTING.md) を参照。
+>
+> 現時点で実装済みのサービス:
+>
+> - [`services/metrics-collector/`](./services/metrics-collector/) （Python / Flask）
 
 ```bash
 # 1. リポジトリをクローン
@@ -107,7 +111,7 @@ syncpulse-platform/
 
 ## ロードマップ
 
-- [ ] `metrics-collector` (Python) の初期実装
+- [x] `metrics-collector` (Python) の初期実装（[`services/metrics-collector/`](./services/metrics-collector/) — `/health`, `POST /api/metrics`, `GET /api/metrics`）
 - [ ] `transformer` (Go) の初期実装
 - [ ] `dashboard-api` (TypeScript) の初期実装
 - [ ] `docker-compose.yml` でのオーケストレーション
