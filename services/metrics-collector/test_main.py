@@ -297,3 +297,131 @@ def test_summary_invalid_since(client):
 def test_summary_until_before_since(client):
     resp = client.get("/api/metrics/summary?since=200&until=100")
     assert resp.status_code == 400
+
+
+def test_batch_all_accepted(client):
+    resp = client.post("/api/metrics/batch", json={
+        "metrics": [
+            {"source": "a", "name": "cpu", "value": 1.0, "timestamp": 100.0},
+            {"source": "b", "name": "mem", "value": 2.0, "timestamp": 200.0},
+            {"source": "c", "name": "disk", "value": 3.0},
+        ],
+    })
+    assert resp.status_code == 201
+    data = resp.get_json()
+    assert data["total"] == 3
+    assert data["accepted_count"] == 3
+    assert data["rejected_count"] == 0
+    assert len(data["accepted"]) == 3
+    assert data["rejected"] == []
+
+    list_resp = client.get("/api/metrics")
+    assert list_resp.get_json()["total"] == 3
+
+
+def test_batch_partial_failure_returns_207(client):
+    resp = client.post("/api/metrics/batch", json={
+        "metrics": [
+            {"source": "ok", "name": "cpu", "value": 1.0},
+            {"source": "", "name": "cpu", "value": 1.0},
+            {"source": "ok", "name": "cpu", "value": "not-a-number"},
+            {"source": "ok2", "name": "mem", "value": 2.0},
+        ],
+    })
+    assert resp.status_code == 207
+    data = resp.get_json()
+    assert data["total"] == 4
+    assert data["accepted_count"] == 2
+    assert data["rejected_count"] == 2
+    indices = sorted([r["index"] for r in data["rejected"]])
+    assert indices == [1, 2]
+    assert "source" in data["rejected"][0]["error"].lower()
+
+    list_resp = client.get("/api/metrics")
+    assert list_resp.get_json()["total"] == 2
+
+
+def test_batch_all_rejected_returns_400(client):
+    resp = client.post("/api/metrics/batch", json={
+        "metrics": [
+            {"source": "", "name": "cpu", "value": 1.0},
+            {"source": "ok", "name": "", "value": 1.0},
+        ],
+    })
+    assert resp.status_code == 400
+    data = resp.get_json()
+    assert data["accepted_count"] == 0
+    assert data["rejected_count"] == 2
+
+
+def test_batch_rejects_non_object_body(client):
+    resp = client.post("/api/metrics/batch", json=[])
+    assert resp.status_code == 400
+
+
+def test_batch_rejects_missing_metrics_field(client):
+    resp = client.post("/api/metrics/batch", json={})
+    assert resp.status_code == 400
+    assert "metrics" in resp.get_json()["error"].lower()
+
+
+def test_batch_rejects_non_array_metrics(client):
+    resp = client.post("/api/metrics/batch", json={"metrics": "not-an-array"})
+    assert resp.status_code == 400
+
+
+def test_batch_rejects_empty_array(client):
+    resp = client.post("/api/metrics/batch", json={"metrics": []})
+    assert resp.status_code == 400
+    assert "empty" in resp.get_json()["error"].lower()
+
+
+def test_batch_rejects_over_max_size(client, monkeypatch):
+    monkeypatch.setattr("main.BATCH_MAX_SIZE", 3)
+    resp = client.post("/api/metrics/batch", json={
+        "metrics": [{"source": "a", "name": "n", "value": 1.0}] * 4,
+    })
+    assert resp.status_code == 400
+    assert "at most 3" in resp.get_json()["error"]
+
+
+def test_batch_non_object_item_rejected_with_index(client):
+    resp = client.post("/api/metrics/batch", json={
+        "metrics": [
+            {"source": "ok", "name": "cpu", "value": 1.0},
+            "this is not an object",
+            42,
+        ],
+    })
+    assert resp.status_code == 207
+    data = resp.get_json()
+    assert data["accepted_count"] == 1
+    assert data["rejected_count"] == 2
+    rejected_indices = sorted([r["index"] for r in data["rejected"]])
+    assert rejected_indices == [1, 2]
+
+
+def test_batch_assigns_default_timestamp(client):
+    resp = client.post("/api/metrics/batch", json={
+        "metrics": [{"source": "a", "name": "n", "value": 1.0}],
+    })
+    assert resp.status_code == 201
+    accepted = resp.get_json()["accepted"]
+    assert accepted[0]["timestamp"] > 0
+
+
+def test_batch_records_visible_in_summary(client):
+    client.post("/api/metrics/batch", json={
+        "metrics": [
+            {"source": "svc", "name": "cpu", "value": 10.0},
+            {"source": "svc", "name": "cpu", "value": 20.0},
+            {"source": "svc", "name": "cpu", "value": 30.0},
+        ],
+    })
+    data = client.get("/api/metrics/summary").get_json()
+    assert data["total_metrics"] == 3
+    s = data["series"][0]
+    assert s["count"] == 3
+    assert s["min"] == 10.0
+    assert s["max"] == 30.0
+    assert s["avg"] == 20.0
