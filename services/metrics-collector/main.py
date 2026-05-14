@@ -29,6 +29,7 @@ MAX_NAME_LENGTH = int(os.environ.get("MAX_NAME_LENGTH", "200"))
 MAX_VALUE = float(os.environ.get("MAX_VALUE", "1e12"))
 LIST_DEFAULT_LIMIT = max(1, int(os.environ.get("LIST_DEFAULT_LIMIT", "100")))
 LIST_MAX_LIMIT = max(LIST_DEFAULT_LIMIT, int(os.environ.get("LIST_MAX_LIMIT", "1000")))
+BATCH_MAX_SIZE = max(1, int(os.environ.get("BATCH_MAX_SIZE", "1000")))
 ALLOWED_SORT_FIELDS = {"timestamp", "source", "name", "value"}
 ALLOWED_SORT_ORDERS = {"asc", "desc"}
 
@@ -100,65 +101,120 @@ def _reject(msg: str, status: int = 400):
     return jsonify({"error": msg}), status
 
 
-@app.route("/api/metrics", methods=["POST"])
-def post_metric():
-    data = request.get_json(silent=True)
+def _validate_metric(data: dict) -> tuple[dict | None, str | None]:
+    """Validate a single metric payload. Returns (record, error_message)."""
     if not isinstance(data, dict):
-        return _reject("Request body must be a JSON object")
+        return None, "Metric must be a JSON object"
 
     source = data.get("source")
     name = data.get("name")
     value = data.get("value")
 
     if not isinstance(source, str):
-        return _reject("Field 'source' must be a string")
+        return None, "Field 'source' must be a string"
     source = source.strip()
     if not source:
-        return _reject("Field 'source' must not be blank")
+        return None, "Field 'source' must not be blank"
     if len(source) > MAX_SOURCE_LENGTH:
-        return _reject(
-            f"Field 'source' must be at most {MAX_SOURCE_LENGTH} characters",
-        )
+        return None, f"Field 'source' must be at most {MAX_SOURCE_LENGTH} characters"
 
     if not isinstance(name, str):
-        return _reject("Field 'name' must be a string")
+        return None, "Field 'name' must be a string"
     name = name.strip()
     if not name:
-        return _reject("Field 'name' must not be blank")
+        return None, "Field 'name' must not be blank"
     if len(name) > MAX_NAME_LENGTH:
-        return _reject(
-            f"Field 'name' must be at most {MAX_NAME_LENGTH} characters",
-        )
+        return None, f"Field 'name' must be at most {MAX_NAME_LENGTH} characters"
 
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return _reject("Field 'value' must be a number")
+        return None, "Field 'value' must be a number"
     if not math.isfinite(float(value)):
-        return _reject("Field 'value' must be a finite number")
+        return None, "Field 'value' must be a finite number"
     if abs(float(value)) > MAX_VALUE:
-        return _reject(f"Field 'value' must be within ±{MAX_VALUE}")
+        return None, f"Field 'value' must be within ±{MAX_VALUE}"
 
     timestamp = data.get("timestamp")
     if timestamp is None:
         timestamp = time.time()
     else:
         if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)):
-            return _reject("Field 'timestamp' must be a number")
+            return None, "Field 'timestamp' must be a number"
         if not math.isfinite(float(timestamp)) or float(timestamp) < 0:
-            return _reject("Field 'timestamp' must be a non-negative finite number")
+            return None, "Field 'timestamp' must be a non-negative finite number"
         timestamp = float(timestamp)
 
-    record = {
+    return {
         "source": source,
         "name": name,
         "value": float(value),
         "timestamp": timestamp,
-    }
+    }, None
+
+
+@app.route("/api/metrics", methods=["POST"])
+def post_metric():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return _reject("Request body must be a JSON object")
+
+    record, err = _validate_metric(data)
+    if err is not None:
+        return _reject(err)
+
     store.add(record)
     logger.info(
         "Recorded metric source=%s name=%s value=%s",
-        source, name, record["value"],
+        record["source"], record["name"], record["value"],
     )
     return jsonify(record), 201
+
+
+@app.route("/api/metrics/batch", methods=["POST"])
+def post_metrics_batch():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return _reject("Request body must be a JSON object")
+    metrics = data.get("metrics")
+    if not isinstance(metrics, list):
+        return _reject("Field 'metrics' must be an array")
+    if len(metrics) == 0:
+        return _reject("Field 'metrics' must not be empty")
+    if len(metrics) > BATCH_MAX_SIZE:
+        return _reject(
+            f"Field 'metrics' must contain at most {BATCH_MAX_SIZE} items",
+        )
+
+    accepted: list[dict] = []
+    rejected: list[dict] = []
+    for index, item in enumerate(metrics):
+        record, err = _validate_metric(item)
+        if err is not None:
+            rejected.append({"index": index, "error": err})
+        else:
+            accepted.append(record)
+
+    for record in accepted:
+        store.add(record)
+
+    total = len(metrics)
+    if len(rejected) == total:
+        status = 400
+    elif rejected:
+        status = 207  # Multi-Status: partial success
+    else:
+        status = 201
+
+    logger.info(
+        "Batch ingest: total=%d accepted=%d rejected=%d",
+        total, len(accepted), len(rejected),
+    )
+    return jsonify({
+        "total": total,
+        "accepted_count": len(accepted),
+        "rejected_count": len(rejected),
+        "accepted": accepted,
+        "rejected": rejected,
+    }), status
 
 
 def _parse_timestamp_arg(value: str, name: str) -> float:
