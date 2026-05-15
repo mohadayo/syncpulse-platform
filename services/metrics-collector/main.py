@@ -82,6 +82,36 @@ class MetricsStore:
             logger.info("Deleted %d metrics for source=%s", deleted, source)
         return deleted
 
+    def delete_by_filter(
+        self,
+        source: str | None = None,
+        name: str | None = None,
+        since: float | None = None,
+        until: float | None = None,
+    ) -> int:
+        def matches(m: dict) -> bool:
+            if source is not None and m.get("source") != source:
+                return False
+            if name is not None and m.get("name") != name:
+                return False
+            ts = m.get("timestamp", 0)
+            if since is not None and ts < since:
+                return False
+            if until is not None and ts > until:
+                return False
+            return True
+
+        with self._lock:
+            before = len(self.items)
+            self.items = [m for m in self.items if not matches(m)]
+            deleted = before - len(self.items)
+        if deleted > 0:
+            logger.info(
+                "Deleted %d metrics (source=%s name=%s since=%s until=%s)",
+                deleted, source, name, since, until,
+            )
+        return deleted
+
 
 store = MetricsStore()
 start_time = time.time()
@@ -321,12 +351,52 @@ def list_metrics():
 @app.route("/api/metrics", methods=["DELETE"])
 def delete_metrics():
     source = request.args.get("source")
-    if not source:
-        return _reject("Query parameter 'source' is required")
-    deleted = store.delete_by_source(source.strip())
+    name = request.args.get("name")
+    since_raw = request.args.get("since")
+    until_raw = request.args.get("until")
+
+    if source is not None:
+        source = source.strip()
+        if not source:
+            return _reject("Query parameter 'source' must not be blank")
+    if name is not None:
+        name = name.strip()
+        if not name:
+            return _reject("Query parameter 'name' must not be blank")
+
+    if not any([source, name, since_raw, until_raw]):
+        return _reject(
+            "At least one of 'source', 'name', 'since', 'until' is required",
+        )
+
+    try:
+        since = _parse_timestamp_arg(since_raw, "since") if since_raw is not None else None
+        until = _parse_timestamp_arg(until_raw, "until") if until_raw is not None else None
+    except ValueError as e:
+        return _reject(str(e))
+
+    if since is not None and until is not None and since > until:
+        return _reject("Query parameter 'until' must be greater than or equal to 'since'")
+
+    deleted = store.delete_by_filter(
+        source=source, name=name, since=since, until=until,
+    )
     if deleted == 0:
-        return jsonify({"error": "No metrics found for the specified source", "deleted_count": 0}), 404
-    return jsonify({"message": "Metrics deleted", "source": source, "deleted_count": deleted})
+        return jsonify({
+            "error": "No metrics found for the specified filters",
+            "deleted_count": 0,
+        }), 404
+
+    response: dict = {"message": "Metrics deleted", "deleted_count": deleted}
+    if source is not None:
+        response["source"] = source
+    if name is not None:
+        response["name"] = name
+    if since is not None:
+        response["since"] = since
+    if until is not None:
+        response["until"] = until
+    return jsonify(response)
 
 
 @app.route("/api/metrics/summary", methods=["GET"])
