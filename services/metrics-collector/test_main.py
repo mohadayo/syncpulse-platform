@@ -244,6 +244,98 @@ def test_delete_metrics_missing_source(client):
     assert resp.status_code == 400
 
 
+def test_delete_metrics_by_name_only(client):
+    client.post("/api/metrics", json={"source": "s1", "name": "deleteme", "value": 1})
+    client.post("/api/metrics", json={"source": "s2", "name": "deleteme", "value": 2})
+    client.post("/api/metrics", json={"source": "s1", "name": "keep", "value": 3})
+
+    resp = client.delete("/api/metrics?name=deleteme")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["deleted_count"] == 2
+    assert data["name"] == "deleteme"
+    assert "source" not in data
+
+    remaining = client.get("/api/metrics").get_json()
+    assert remaining["total"] == 1
+    assert remaining["metrics"][0]["name"] == "keep"
+
+
+def test_delete_metrics_by_time_range(client):
+    client.post("/api/metrics", json={"source": "s", "name": "n", "value": 1, "timestamp": 100})
+    client.post("/api/metrics", json={"source": "s", "name": "n", "value": 2, "timestamp": 200})
+    client.post("/api/metrics", json={"source": "s", "name": "n", "value": 3, "timestamp": 300})
+
+    resp = client.delete("/api/metrics?since=150&until=250")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["deleted_count"] == 1
+    assert data["since"] == 150.0
+    assert data["until"] == 250.0
+
+    remaining = client.get("/api/metrics").get_json()
+    assert remaining["total"] == 2
+    timestamps = sorted(m["timestamp"] for m in remaining["metrics"])
+    assert timestamps == [100.0, 300.0]
+
+
+def test_delete_metrics_by_until_only_retention_use_case(client):
+    """データ保持期限切れ削除のユースケース: 古いデータを until=cutoff で削除"""
+    client.post("/api/metrics", json={"source": "s", "name": "n", "value": 1, "timestamp": 100})
+    client.post("/api/metrics", json={"source": "s", "name": "n", "value": 2, "timestamp": 500})
+    client.post("/api/metrics", json={"source": "s", "name": "n", "value": 3, "timestamp": 1000})
+
+    resp = client.delete("/api/metrics?until=500")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["deleted_count"] == 2
+
+    remaining = client.get("/api/metrics").get_json()
+    assert remaining["total"] == 1
+    assert remaining["metrics"][0]["timestamp"] == 1000.0
+
+
+def test_delete_metrics_combined_filters(client):
+    client.post("/api/metrics", json={"source": "web", "name": "rps", "value": 1, "timestamp": 100})
+    client.post("/api/metrics", json={"source": "web", "name": "rps", "value": 2, "timestamp": 500})
+    client.post("/api/metrics", json={"source": "web", "name": "latency", "value": 50, "timestamp": 500})
+    client.post("/api/metrics", json={"source": "db", "name": "rps", "value": 9, "timestamp": 500})
+
+    resp = client.delete("/api/metrics?source=web&name=rps&since=200")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["deleted_count"] == 1
+
+    remaining = client.get("/api/metrics").get_json()
+    assert remaining["total"] == 3
+
+
+def test_delete_metrics_rejects_invalid_since(client):
+    client.post("/api/metrics", json={"source": "s", "name": "n", "value": 1})
+    resp = client.delete("/api/metrics?since=not-a-number")
+    assert resp.status_code == 400
+    assert "since" in resp.get_json()["error"]
+
+
+def test_delete_metrics_rejects_until_before_since(client):
+    client.post("/api/metrics", json={"source": "s", "name": "n", "value": 1})
+    resp = client.delete("/api/metrics?since=500&until=100")
+    assert resp.status_code == 400
+
+
+def test_delete_metrics_blank_name_rejected(client):
+    resp = client.delete("/api/metrics?name=   ")
+    assert resp.status_code == 400
+
+
+def test_delete_metrics_returns_404_when_filters_match_nothing(client):
+    client.post("/api/metrics", json={"source": "alive", "name": "n", "value": 1})
+    resp = client.delete("/api/metrics?name=ghost")
+    assert resp.status_code == 404
+    data = resp.get_json()
+    assert data["deleted_count"] == 0
+
+
 def test_summary_basic(client):
     for v in [10.0, 20.0, 30.0]:
         client.post("/api/metrics", json={"source": "s", "name": "n", "value": v})
