@@ -32,6 +32,9 @@ LIST_MAX_LIMIT = max(LIST_DEFAULT_LIMIT, int(os.environ.get("LIST_MAX_LIMIT", "1
 BATCH_MAX_SIZE = max(1, int(os.environ.get("BATCH_MAX_SIZE", "1000")))
 ALLOWED_SORT_FIELDS = {"timestamp", "source", "name", "value"}
 ALLOWED_SORT_ORDERS = {"asc", "desc"}
+ALLOWED_SOURCES_SORT_FIELDS = {
+    "source", "total_metrics", "first_seen", "last_seen", "metric_names",
+}
 
 
 def _percentile(sorted_values: list[float], pct: float) -> float:
@@ -397,6 +400,109 @@ def delete_metrics():
     if until is not None:
         response["until"] = until
     return jsonify(response)
+
+
+@app.route("/api/metrics/sources", methods=["GET"])
+def list_sources():
+    """Aggregate metrics by source (host / origin)."""
+    name = request.args.get("name")
+    sort_field = request.args.get("sort", "source")
+    sort_order = request.args.get("order", "asc")
+
+    if sort_field not in ALLOWED_SOURCES_SORT_FIELDS:
+        return _reject(
+            "Query parameter 'sort' must be one of: "
+            + ", ".join(sorted(ALLOWED_SOURCES_SORT_FIELDS)),
+        )
+    if sort_order not in ALLOWED_SORT_ORDERS:
+        return _reject(
+            "Query parameter 'order' must be one of: "
+            + ", ".join(sorted(ALLOWED_SORT_ORDERS)),
+        )
+
+    try:
+        since = _parse_timestamp_arg(request.args["since"], "since") \
+            if "since" in request.args else None
+        until = _parse_timestamp_arg(request.args["until"], "until") \
+            if "until" in request.args else None
+    except ValueError as e:
+        return _reject(str(e))
+
+    if since is not None and until is not None and since > until:
+        return _reject("Query parameter 'until' must be greater than or equal to 'since'")
+
+    limit_raw = request.args.get("limit")
+    if limit_raw is None:
+        limit = LIST_DEFAULT_LIMIT
+    else:
+        try:
+            limit = int(limit_raw)
+        except ValueError:
+            return _reject("Query parameter 'limit' must be an integer")
+        if limit < 1 or limit > LIST_MAX_LIMIT:
+            return _reject(f"Query parameter 'limit' must be between 1 and {LIST_MAX_LIMIT}")
+
+    offset_raw = request.args.get("offset")
+    if offset_raw is None:
+        offset = 0
+    else:
+        try:
+            offset = int(offset_raw)
+        except ValueError:
+            return _reject("Query parameter 'offset' must be an integer")
+        if offset < 0:
+            return _reject("Query parameter 'offset' must be non-negative")
+
+    items = store.snapshot()
+    filtered = _filter_metrics(items, None, name, since, until)
+
+    by_source: dict[str, dict] = {}
+    for m in filtered:
+        src = m.get("source")
+        if src is None:
+            continue
+        entry = by_source.get(src)
+        if entry is None:
+            by_source[src] = {
+                "source": src,
+                "total_metrics": 1,
+                "first_seen": m.get("timestamp", 0.0),
+                "last_seen": m.get("timestamp", 0.0),
+                "metric_names_set": {m.get("name")} if m.get("name") else set(),
+            }
+            continue
+        entry["total_metrics"] += 1
+        ts = m.get("timestamp", 0.0)
+        if ts < entry["first_seen"]:
+            entry["first_seen"] = ts
+        if ts > entry["last_seen"]:
+            entry["last_seen"] = ts
+        if m.get("name"):
+            entry["metric_names_set"].add(m.get("name"))
+
+    sources = []
+    for entry in by_source.values():
+        names_set = entry.pop("metric_names_set", set())
+        entry["metric_names"] = sorted(names_set)
+        sources.append(entry)
+
+    reverse = sort_order == "desc"
+    if sort_field == "metric_names":
+        sources.sort(key=lambda s: len(s["metric_names"]), reverse=reverse)
+    else:
+        sources.sort(key=lambda s: s.get(sort_field, ""), reverse=reverse)
+
+    total = len(sources)
+    page = sources[offset:offset + limit]
+    return jsonify({
+        "total": total,
+        "count": len(page),
+        "limit": limit,
+        "offset": offset,
+        "sort": sort_field,
+        "order": sort_order,
+        "sources": page,
+    })
 
 
 @app.route("/api/metrics/summary", methods=["GET"])
