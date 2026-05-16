@@ -517,3 +517,126 @@ def test_batch_records_visible_in_summary(client):
     assert s["min"] == 10.0
     assert s["max"] == 30.0
     assert s["avg"] == 20.0
+
+
+# --- /api/metrics/sources ---
+
+
+def _seed_sources(client):
+    client.post("/api/metrics", json={
+        "source": "host-1", "name": "cpu", "value": 1.0, "timestamp": 100.0,
+    })
+    client.post("/api/metrics", json={
+        "source": "host-1", "name": "mem", "value": 2.0, "timestamp": 200.0,
+    })
+    client.post("/api/metrics", json={
+        "source": "host-2", "name": "cpu", "value": 3.0, "timestamp": 150.0,
+    })
+    client.post("/api/metrics", json={
+        "source": "host-3", "name": "disk", "value": 4.0, "timestamp": 300.0,
+    })
+
+
+def test_sources_empty_store(client):
+    resp = client.get("/api/metrics/sources")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["total"] == 0
+    assert data["count"] == 0
+    assert data["sources"] == []
+    assert data["sort"] == "source"
+    assert data["order"] == "asc"
+
+
+def test_sources_aggregates_per_source(client):
+    _seed_sources(client)
+    resp = client.get("/api/metrics/sources")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["total"] == 3
+    sources = {s["source"]: s for s in data["sources"]}
+    assert set(sources) == {"host-1", "host-2", "host-3"}
+    assert sources["host-1"]["total_metrics"] == 2
+    assert sources["host-1"]["metric_names"] == ["cpu", "mem"]
+    assert sources["host-1"]["first_seen"] == 100.0
+    assert sources["host-1"]["last_seen"] == 200.0
+    assert sources["host-2"]["total_metrics"] == 1
+    assert sources["host-2"]["metric_names"] == ["cpu"]
+
+
+def test_sources_default_sort_is_source_asc(client):
+    _seed_sources(client)
+    data = client.get("/api/metrics/sources").get_json()
+    names = [s["source"] for s in data["sources"]]
+    assert names == ["host-1", "host-2", "host-3"]
+
+
+def test_sources_sort_by_total_desc(client):
+    _seed_sources(client)
+    data = client.get("/api/metrics/sources?sort=total_metrics&order=desc").get_json()
+    names = [s["source"] for s in data["sources"]]
+    assert names == ["host-1", "host-2", "host-3"]
+
+
+def test_sources_sort_by_last_seen_desc(client):
+    _seed_sources(client)
+    data = client.get("/api/metrics/sources?sort=last_seen&order=desc").get_json()
+    names = [s["source"] for s in data["sources"]]
+    assert names == ["host-3", "host-1", "host-2"]
+
+
+def test_sources_filter_by_name(client):
+    _seed_sources(client)
+    data = client.get("/api/metrics/sources?name=cpu").get_json()
+    assert data["total"] == 2
+    names = sorted(s["source"] for s in data["sources"])
+    assert names == ["host-1", "host-2"]
+
+
+def test_sources_filter_by_since_until(client):
+    _seed_sources(client)
+    data = client.get("/api/metrics/sources?since=150&until=250").get_json()
+    sources = {s["source"]: s for s in data["sources"]}
+    assert "host-3" not in sources
+    assert sources["host-1"]["total_metrics"] == 1
+    assert sources["host-2"]["total_metrics"] == 1
+
+
+def test_sources_invalid_sort(client):
+    resp = client.get("/api/metrics/sources?sort=bogus")
+    assert resp.status_code == 400
+
+
+def test_sources_invalid_order(client):
+    resp = client.get("/api/metrics/sources?order=sideways")
+    assert resp.status_code == 400
+
+
+def test_sources_invalid_since(client):
+    resp = client.get("/api/metrics/sources?since=abc")
+    assert resp.status_code == 400
+
+
+def test_sources_until_less_than_since(client):
+    resp = client.get("/api/metrics/sources?since=200&until=100")
+    assert resp.status_code == 400
+
+
+def test_sources_pagination(client):
+    _seed_sources(client)
+    data = client.get("/api/metrics/sources?limit=1&offset=1").get_json()
+    assert data["total"] == 3
+    assert data["count"] == 1
+    assert data["limit"] == 1
+    assert data["offset"] == 1
+    assert data["sources"][0]["source"] == "host-2"
+
+
+def test_sources_invalid_limit(client):
+    resp = client.get("/api/metrics/sources?limit=0")
+    assert resp.status_code == 400
+
+
+def test_sources_invalid_offset(client):
+    resp = client.get("/api/metrics/sources?offset=-1")
+    assert resp.status_code == 400
